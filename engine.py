@@ -104,6 +104,8 @@ def train(
         "test_acc": [],
     }
 
+    # TODO: Save best models to checkpoint and make us load from there
+
     for epoch in tqdm(range(epochs)):
         train_loss, train_acc = train_step(
             model, train_dataloader, criterion, optimizer, device)
