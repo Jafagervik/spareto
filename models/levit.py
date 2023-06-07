@@ -37,11 +37,16 @@ def shrink(heads: int):
     pass
 
 
-def attention(heads: int):
-    """
-    For the stages
-    """
-    return heads
+class Attention(nn.Module):
+
+    def __init__(self, num_heads: int = 8) -> None:
+        super().__init__()
+
+        self.num_heads = num_heads
+
+    def forward(self, x):
+
+        return x
 
 
 class Stage(nn.Module):
