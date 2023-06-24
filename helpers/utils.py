@@ -7,7 +7,7 @@ def parse_args():
     """
     Argument parser for handling some of the configs outside the yaml file
     """
-    parser = ArgumentParser(description="Hello I'm drowning im underwater please help")
+    parser = ArgumentParser(description="Image segmentation models in pytorch")
     parser.add_argument('--no-cuda', action='store_true', default=False, 
                         help='disable cuda')
     parser.add_argument('--debug', action='store_true', default=True, 

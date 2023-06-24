@@ -52,10 +52,7 @@ def main():
 
     start = time.time()
 
-    writer = None 
-
-    if args.debug:
-        writer = SummaryWriter()
+    writer = SummaryWriter() if args.debug else None
 
     results = engine.train(
         model,
