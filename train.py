@@ -1,48 +1,86 @@
 """Main file for running and setting up training loop"""
 import torch
-from models.levit import LeViT256
+import torch.nn as nn
+from torch import optim
+from helpers.datasetup import create_dataloaders
+from models.unet import UNet
 from torch.optim.lr_scheduler import StepLR
-from configs import commons, levit256
+from torch.utils.tensorboard.writer import SummaryWriter
+from helpers import utils
+from helpers import graphs
+import time
+import yaml
 
 import engine
 
-
 def main():
-    """
-    Entry point for training loop
-    """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    args = utils.parse_args()
 
-    # Get the dataloaders with prepared data ready for use
-    train_dataloader = None
-    test_dataloader = None
+    with open("configs/config.yaml", "r") as stream:
+        config = yaml.safe_load(stream)
 
-    # TODO: store convolution sizes in levit config
+    utils.seed_all(args.seed)
 
-    model = LeViT256(in_features=(levit256.IMG_SIZE ** 2)
-                     * levit256.NUM_CHANNELS).to(device)
+    use_cuda = not args.no_cuda and torch.cuda.is_available()
 
-    if commons.LOAD_MODEL:
-        model.load_state_dict(torch.load(commons.CHECKPOINT_PATH))
+    device = torch.device("cuda" if use_cuda else "cpu")
 
-    criterion = torch.nn.CrossEntropyLoss()
+    print(f"{device=}")
 
-    optimizer = torch.optim.Adam(params=model.parameters())
+    if use_cuda:
+        for i in range(torch.cuda.device_count()):
+            print(torch.cuda.get_device_properties(i))
 
-    # To find the very best LR
-    scheduler = StepLR(optimizer, step_size=levit256.STEP_SIZE)
 
-    engine.train(
+    train_dataloader, test_dataloader, class_names = create_dataloaders(config)
+
+    model = UNet(channels=[1, 64, 128, 256, 512, 512, 4096, 4096, 10])
+
+    model = nn.DataParallel(model)
+    compiled = torch.compile(model)
+
+    # Transfer learning
+    if args.load_model:
+        compiled.load_state_dict(torch.load(config['checkpoint_best']))
+
+    compiled.to(device)
+
+    optimizer = optim.Adadelta(compiled.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss()
+
+    scheduler = StepLR(optimizer, step_size=config['step_size'], gamma=args.gamma)
+
+    start = time.time()
+
+    writer = None 
+
+    if args.debug:
+        writer = SummaryWriter()
+
+    results = engine.train(
         model,
         train_dataloader=train_dataloader,
         test_dataloader=test_dataloader,
         criterion=criterion,
         optimizer=optimizer,
         scheduler=scheduler,
-        epochs=levit256.NUM_EPOCHS,
-        device=torch.device(device))
+        device=device,
+        config=config,
+        writer=writer)
+
+    end = time.time()
+
+    if args.debug:
+        graphs.plot_acc_loss(results)
+
+        elapsed = end  - start 
+        print(f"Training took: {elapsed} seconds using {device}")
 
     print("Finished training!")
+
+    # Save model to file if selected
+    if args.save_model:
+        torch.save(model.state_dict(), config['checkpoint_last'])
 
 
 if __name__ == "__main__":

@@ -14,15 +14,16 @@ def train_step(
     dataloader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
-    device: torch.device
+    device: torch.device,
+    epoch: int,
+    writer = None
 ) -> Tuple[float, float]:
     """Performs one epoch worth of training
 
     Returns:
         train loss and accuracy
     """
-
-    model.train()  # First of we set model in train mode
+    model.train() 
 
     train_loss, train_acc = 0, 0
 
@@ -35,6 +36,9 @@ def train_step(
 
         loss = criterion(y_hat, y)
         train_loss += loss.item()
+
+        if writer:
+            writer.add_scalar("Loss/train", train_loss, epoch)
 
         optimizer.zero_grad()
         loss.backward()
@@ -49,42 +53,46 @@ def train_step(
     return train_loss, train_acc
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def test_step(
     model: nn.Module,
+    highest_acc: float,
     dataloader: DataLoader,
     criterion: nn.Module,
-    device: torch.device
-) -> Tuple[float, float]:
+    device: torch.device,
+    config
+) -> Tuple[float, float, float]:
     """ Performs one epoch worth of testing
 
     Returns:
-        test loss and accuracy
+        test loss and accuracy as well as highest accuracy
     """
-
-    model.eval()  # First of we set model in train mode
+    model.eval()
 
     test_loss, test_acc = 0, 0
 
     # Go through the batches in current epoch
-    with torch.inference_mode():  # TODO: find out if this is needed anymore
-        for _, (X, y) in dataloader:
-            X = X.to(device)
-            y = y.to(device)
+    for _, (X, y) in dataloader:
+        X = X.to(device)
+        y = y.to(device)
 
-            test_pred_logits = model(X)
+        test_pred_logits = model(X)
 
-            loss = criterion(test_pred_logits, y)
-            test_loss += loss.item()
+        loss = criterion(test_pred_logits, y)
+        test_loss += loss.item()
 
-            test_pred_labels = test_pred_logits.argmax(dim=1)
-            test_acc += ((test_pred_labels == y).sum().item() /
-                         len(test_pred_labels))
+        test_pred_labels = test_pred_logits.argmax(dim=1)
+        test_acc += ((test_pred_labels == y).sum().item() /
+                        len(test_pred_labels))
+
+        if test_acc > highest_acc:
+            highest_acc = test_acc
+            torch.save(model.state_dict(), config.checkpoint_best)
 
     test_loss /= len(dataloader)
     test_acc /= len(dataloader)
 
-    return test_loss, test_acc
+    return test_loss, test_acc, highest_acc 
 
 
 def train(
@@ -94,8 +102,9 @@ def train(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: StepLR,
-    epochs: int,
-    device: torch.device
+    device: torch.device,
+    config, # YAML
+    writer = None
 ):
     results = {
         "train_loss": [],
@@ -104,19 +113,19 @@ def train(
         "test_acc": [],
     }
 
-    # TODO: Save best models to checkpoint and make us load from there
+    highest_acc = 0.0
 
-    for epoch in tqdm(range(epochs)):
+    for epoch in tqdm(range(1, config['epochs']+ 1)):
         train_loss, train_acc = train_step(
-            model, train_dataloader, criterion, optimizer, device)
+            model, train_dataloader, criterion, optimizer, device, epoch, writer if writer else None)
 
-        test_loss, test_acc = test_step(
-            model, test_dataloader, criterion,  device)
+        test_loss, test_acc, highest_acc = test_step(
+            model, highest_acc, test_dataloader, criterion,  device, config)
 
         scheduler.step()
 
         print(
-            f"Epoch: {epoch+1} | "
+            f"Epoch: {epoch} | "
             f"train_loss: {train_loss:.4f} | "
             f"train_acc: {train_acc:.4f} | "
             f"test_loss: {test_loss:.4f} | "
@@ -127,5 +136,8 @@ def train(
         results["train_acc"].append(train_acc)
         results["test_loss"].append(test_loss)
         results["test_acc"].append(test_acc)
+
+    if writer:
+        writer.flush()
 
     return results

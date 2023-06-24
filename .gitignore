@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# mandel 
+/mandel/
+
 # Distribution / packaging
 .Python
 build/
