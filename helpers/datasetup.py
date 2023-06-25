@@ -1,6 +1,7 @@
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
+from torch.utils.data.distributed import DistributedSampler
 from PIL import Image
 
 
@@ -38,7 +39,7 @@ class CustomDataSet(Dataset):
         return len(self.imgs)
 
 
-def create_dataloaders(config):
+def create_dataloaders(config, world_size: int, rank: int):
     """
     Initializes data from datasets, creates dataloaders and return them 
     for use
@@ -56,6 +57,20 @@ def create_dataloaders(config):
     train_data = CustomDataSet("./", config['train_dir'], transform=transform)
     test_data = CustomDataSet("./", config['test_dir'], transform=transform)
 
+    # Set up distributed sampler so 
+    # each rank knows what data to use
+    train_sampler = DistributedSampler(
+        train_data,
+        num_replicas=world_size,
+        rank=rank
+    )
+
+    test_sampler = DistributedSampler(
+        test_data,
+        num_replicas=world_size,
+        rank=rank
+    )
+
     class_names = train_data.classes
 
     train_dl = DataLoader(
@@ -63,7 +78,8 @@ def create_dataloaders(config):
         batch_size=config['batch_size'],
         shuffle=config['shuffle'],
         num_workers=config['use_cpu'],
-        pin_memory=config['pin_memory']
+        pin_memory=config['pin_memory'],
+        sampler=train_sampler
     )
 
     test_dl = DataLoader(
@@ -71,7 +87,8 @@ def create_dataloaders(config):
         batch_size=config['batch_size'],
         shuffle=config['shuffle'],
         num_workers=config['use_cpu'],
-        pin_memory=config['pin_memory']
+        pin_memory=config['pin_memory'],
+        sampler=test_sampler
     )
 
     return train_dl, test_dl, class_names

@@ -104,14 +104,14 @@ class UNet(nn.Module):
         # Classifier
         x = self.classifier(x)
         
-        # Softmax before output
-        x = F.softmax(x, dim=1) 
+        # NOTE: Softmax before output, check if this is even needed due to loss
+        # x = F.softmax(x, dim=1) 
 
         return x
 
 
 if __name__ == "__main__":
-    model = UNet([1,2,3])
+    model = UNet([1,2,3, 42, 69, 10])
 
     p = model.parameters()
 

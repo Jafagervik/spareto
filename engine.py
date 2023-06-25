@@ -6,7 +6,10 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import StepLR
+
+import time
 from typing import Tuple
+from helpers import graphs
 
 
 def train_step(
@@ -96,14 +99,16 @@ def test_step(
 
 
 def train(
-    model: nn.Module,
+    model,
+    rank: int,
     train_dataloader,
     test_dataloader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: StepLR,
     device: torch.device,
-    config, # YAML
+    config, # YAML,
+    args,
     writer = None
 ):
     results = {
@@ -115,6 +120,8 @@ def train(
 
     highest_acc = 0.0
 
+    start = time.time() 
+
     for epoch in tqdm(range(1, config['epochs']+ 1)):
         train_loss, train_acc = train_step(
             model, train_dataloader, criterion, optimizer, device, epoch, writer if writer else None)
@@ -125,6 +132,7 @@ def train(
         scheduler.step()
 
         print(
+            f"Rank {rank} | "
             f"Epoch: {epoch} | "
             f"train_loss: {train_loss:.4f} | "
             f"train_acc: {train_acc:.4f} | "
@@ -140,4 +148,16 @@ def train(
     if writer:
         writer.flush()
 
-    return results
+    end = time.time()
+
+    if rank == 0:
+        print(f"Training complete in {end - start} seconds")
+
+        # Save model to file if selected
+        if args.save_model:
+            torch.save(model.state_dict(), config['checkpoint_last'])
+
+        if args.debug:
+            graphs.plot_acc_loss(results)
+
+
