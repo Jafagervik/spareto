@@ -15,7 +15,7 @@ use_cpu: 4 # Number of workers
 learning_rate: 1e-3 # this could instead be read from argparser?
 gamma: 7e-2
 pin_memory: true 
-epochs: 2
+epochs: 10
 test_step: 20
 batch_size: 32
 img_size: 224

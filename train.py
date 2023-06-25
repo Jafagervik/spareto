@@ -2,8 +2,9 @@
 import torch
 import torch.nn as nn
 from torch import optim
-from helpers.datasetup import create_dataloaders
+from helpers.datasetup import init_datasets, init_dataloaders
 from models.unet import UNet
+from models.toymod import ToyMpModel
 from torch.optim.lr_scheduler import StepLR
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -23,40 +24,10 @@ import yaml
 os.environ['MASTER_ADDR'] = 'localhost'
 os.environ['MASTER_PORT'] = '12356'
 torch.set_float32_matmul_precision('high')
-
-
-class ToyMpModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.dropout1 = nn.Dropout(0.25)
-        self.dropout2 = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        x = self.fc2(x)
-        # output = F.log_softmax(x, dim=1)
-        return x
-
-
-
-# Some constants
 WORLD_SZ = torch.cuda.device_count() if torch.cuda.is_available() else 2
 
 
-def run_process(rank, args, config, dataset1, dataset2):
+def run_process(rank, args, config, train_dataset, test_dataset):
     """
     This function is to be run on every single processor 
 
@@ -72,7 +43,7 @@ def run_process(rank, args, config, dataset1, dataset2):
     # init_method="tcp://127.0.0.1:54621"
 
     # Seed all rngs
-    utils.seed_all(args.seed)
+    # utils.seed_all(args.seed)
 
     # model = UNet(channels=[1, 64, 128, 256, 512, 512, 4096, 4096, 10]).to(rank)
     model = ToyMpModel()
@@ -101,21 +72,21 @@ def run_process(rank, args, config, dataset1, dataset2):
     test_kwargs.update(cuda_kwargs)
 
     train_sampler = DistributedSampler(
-        dataset1,
+        train_dataset,
         num_replicas=WORLD_SZ,
         rank=rank,
         shuffle=config['shuffle']
     )
 
     test_sampler = DistributedSampler(
-        dataset2,
+        test_dataset,
         num_replicas=WORLD_SZ,
         rank=rank,
         shuffle=config['shuffle']
     )
 
-    train_dataloader = torch.utils.data.DataLoader(dataset1, sampler=train_sampler, **train_kwargs)
-    test_dataloader = torch.utils.data.DataLoader(dataset2, sampler=test_sampler, **test_kwargs)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, sampler=train_sampler, **train_kwargs)
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, sampler=test_sampler, **test_kwargs)
 
     optimizer = optim.Adadelta(compiled.parameters(), lr=float(config['learning_rate']))
     criterion = nn.CrossEntropyLoss().cuda(rank)
@@ -132,7 +103,6 @@ def run_process(rank, args, config, dataset1, dataset2):
 
     engine.train(
         model=compiled,
-        rank=rank,
         train_dataloader=train_dataloader,
         test_dataloader=test_dataloader,
         criterion=criterion,
@@ -141,8 +111,10 @@ def run_process(rank, args, config, dataset1, dataset2):
         device=device,
         config=config,
         args=args,
+        rank=rank,
         writer=writer)
 
+    dist.barrier()
     dist.destroy_process_group()
 
 
@@ -161,17 +133,66 @@ def setup_dataset():
     return dataset1, dataset2
 
 
+def serial(args, config, train_dataset, test_dataset):
+    """
+    Serial implementation running on cpu 
+    """
+    # model = UNet(channels=[1, 64, 128, 256, 512, 512, 4096, 4096, 10]).to(rank)
+    model = ToyMpModel()
+    compiled = torch.compile(model)
+
+    # Transfer learning
+    if args.load_model:
+        compiled.load_state_dict(torch.load(config['checkpoint_best']))
+
+    # Creates dataloaders based on ranks
+    #train_dataloader, test_dataloader, class_names = create_dataloaders(config, world_size=WORLD_SZ, rank=rank)
+
+    train_kwargs = {'batch_size': 32}
+    test_kwargs = {'batch_size': 1000}
+
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, **train_kwargs)
+    test_dataloader = torch.utils.data.DataLoader(test_dataset, **test_kwargs)
+
+    optimizer = optim.Adadelta(compiled.parameters(), lr=float(config['learning_rate']))
+    criterion = nn.CrossEntropyLoss()
+
+    scheduler = StepLR(optimizer, step_size=config['step_size'], gamma=float(config['gamma']))
+
+    # writer = SummaryWriter()
+    writer = None
+
+    # We here set the correct gpu to run on based on which rank we're in
+    device = torch.device("cpu")
+
+    engine.train(
+        model=compiled,
+        train_dataloader=train_dataloader,
+        test_dataloader=test_dataloader,
+        criterion=criterion,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device,
+        config=config,
+        args=args,
+        writer=writer)
+
 def main():
     """
     Setup world and rank to distribute dataset over multiple gpus
     """
     # Parse cml args
     args = utils.parse_args()
+
+    # Seed all rngs
+    utils.seed_all(args.seed)
     
     # Open config flie
     with open("configs/config.yaml", "r") as stream:
         config = yaml.safe_load(stream)
 
+    # Init datasets
+    train_ds, test_ds = setup_dataset()
 
     # Check whether or not to run on cuda
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -180,17 +201,18 @@ def main():
         # TODO: Serial setup
         print("Setup serial run")
 
+        serial(args, config, train_ds, test_ds)
+
         print("Finished serial training!")
-        return
+        exit(0)
 
 
     if args.debug:
         for i in range(torch.cuda.device_count()):
             print(torch.cuda.get_device_properties(i))
 
-    dataset1, dataset2 = setup_dataset()
 
-    arg_list = (args, config, dataset1, dataset2)
+    arg_list = (args, config, train_ds, test_ds)
 
     mp.spawn(fn=run_process,
              nprocs=WORLD_SZ, 

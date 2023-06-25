@@ -13,7 +13,6 @@ from typing import Tuple
 from helpers import graphs
 
 
-
 def train_step(
     model: nn.Module,
     dataloader: DataLoader,
@@ -42,8 +41,8 @@ def train_step(
         loss = criterion(y_hat, y)
         train_loss += loss.item()
 
-        # if writer:
-        #     writer.add_scalar("Loss/train", train_loss, epoch)
+        if writer:
+            writer.add_scalar("Loss/train", train_loss, epoch)
 
         optimizer.zero_grad()
         loss.backward()
@@ -94,9 +93,7 @@ def test_step(
 
         if test_acc > highest_acc:
             highest_acc = test_acc
-            # FIXME: DATARACE
             torch.save(model.state_dict(), config['checkpoint_best'])
-            # dist.barrier()
 
     test_loss /= len(dataloader)
     test_acc /= len(dataloader)
@@ -106,7 +103,6 @@ def test_step(
 
 def train(
     model,
-    rank: int,
     train_dataloader,
     test_dataloader,
     criterion: nn.Module,
@@ -115,22 +111,24 @@ def train(
     device: torch.device,
     config,
     args,
+    rank: int = 0,
     writer = None
 ):
     results = {
         "0": {
-            "train_loss": [],
-            "train_acc": [],
-            "test_loss": [],
-            "test_acc": [],
+            "train_loss": [0.0],
+            "train_acc": [0.0],
+            "test_loss": [0.0],
+            "test_acc": [0.0],
         },
         "1": {
-            "train_loss": [],
-            "train_acc": [],
-            "test_loss": [],
-            "test_acc": [],
+            "train_loss": [0.0],
+            "train_acc": [0.0],
+            "test_loss": [0.0],
+            "test_acc": [0.0],
         },
     }
+
 
     highest_acc = 0.0
 
@@ -144,6 +142,9 @@ def train(
             model, highest_acc, test_dataloader, criterion,  device, config)
 
         scheduler.step()
+
+        if args.dry_run:
+            break
 
         print(
             f"Rank {rank} | "
@@ -159,8 +160,6 @@ def train(
         results["%d" % rank]["test_acc"].append(train_loss)
         results["%d" % rank]["test_loss"].append(train_loss)
 
-        if args.dry_run:
-            break
 
     if writer:
         writer.flush()
@@ -173,7 +172,6 @@ def train(
         # Save model to file if selected
         if args.save_model:
             torch.save(model.state_dict(), config['checkpoint_last'])
-            dist.barrier()
 
         graphs.plot_acc_loss(results)
     
