@@ -208,11 +208,9 @@ def main():
         print("Finished serial training!")
         return
 
-
     if args.debug:
         for i in range(torch.cuda.device_count()):
             print(torch.cuda.get_device_properties(i))
-
 
     arg_list = (args, config, train_ds, test_ds)
 

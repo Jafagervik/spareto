@@ -22,3 +22,4 @@ def plot_acc_loss(results):
     plt.ylim([0.0, 100.0])
 
     plt.show()
+
