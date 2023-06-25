@@ -6,10 +6,12 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import StepLR
+import torch.distributed as dist
 
 import time
 from typing import Tuple
 from helpers import graphs
+
 
 
 def train_step(
@@ -31,7 +33,7 @@ def train_step(
     train_loss, train_acc = 0, 0
 
     # Go through the batches in current epoch
-    for batch_idx, (X, y) in dataloader:
+    for batch_idx, (X, y) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
 
@@ -40,8 +42,8 @@ def train_step(
         loss = criterion(y_hat, y)
         train_loss += loss.item()
 
-        if writer:
-            writer.add_scalar("Loss/train", train_loss, epoch)
+        # if writer:
+        #     writer.add_scalar("Loss/train", train_loss, epoch)
 
         optimizer.zero_grad()
         loss.backward()
@@ -52,6 +54,7 @@ def train_step(
 
     train_loss /= len(dataloader)
     train_acc /= len(dataloader)
+
 
     return train_loss, train_acc
 
@@ -75,7 +78,7 @@ def test_step(
     test_loss, test_acc = 0, 0
 
     # Go through the batches in current epoch
-    for _, (X, y) in dataloader:
+    for _, (X, y) in enumerate(dataloader):
         X = X.to(device)
         y = y.to(device)
 
@@ -88,9 +91,12 @@ def test_step(
         test_acc += ((test_pred_labels == y).sum().item() /
                         len(test_pred_labels))
 
+
         if test_acc > highest_acc:
             highest_acc = test_acc
-            torch.save(model.state_dict(), config.checkpoint_best)
+            # FIXME: DATARACE
+            torch.save(model.state_dict(), config['checkpoint_best'])
+            # dist.barrier()
 
     test_loss /= len(dataloader)
     test_acc /= len(dataloader)
@@ -107,15 +113,23 @@ def train(
     optimizer: torch.optim.Optimizer,
     scheduler: StepLR,
     device: torch.device,
-    config, # YAML,
+    config,
     args,
     writer = None
 ):
     results = {
-        "train_loss": [],
-        "train_acc": [],
-        "test_loss": [],
-        "test_acc": [],
+        "0": {
+            "train_loss": [],
+            "train_acc": [],
+            "test_loss": [],
+            "test_acc": [],
+        },
+        "1": {
+            "train_loss": [],
+            "train_acc": [],
+            "test_loss": [],
+            "test_acc": [],
+        },
     }
 
     highest_acc = 0.0
@@ -140,10 +154,13 @@ def train(
             f"test_acc: {test_acc:.4f}"
         )
 
-        results["train_loss"].append(train_loss)
-        results["train_acc"].append(train_acc)
-        results["test_loss"].append(test_loss)
-        results["test_acc"].append(test_acc)
+        results["%d" % rank]["train_acc"].append(train_loss)
+        results["%d" % rank]["train_loss"].append(train_loss)
+        results["%d" % rank]["test_acc"].append(train_loss)
+        results["%d" % rank]["test_loss"].append(train_loss)
+
+        if args.dry_run:
+            break
 
     if writer:
         writer.flush()
@@ -156,8 +173,10 @@ def train(
         # Save model to file if selected
         if args.save_model:
             torch.save(model.state_dict(), config['checkpoint_last'])
+            dist.barrier()
 
-        if args.debug:
-            graphs.plot_acc_loss(results)
+        graphs.plot_acc_loss(results)
+    
+
 
 

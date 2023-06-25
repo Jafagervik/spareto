@@ -39,24 +39,39 @@ class CustomDataSet(Dataset):
         return len(self.imgs)
 
 
-def create_dataloaders(config, world_size: int, rank: int):
+def init_datasets():
+    """
+    Setup dataset with dataloaders
+    """
+    transform=transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+
+    # Handle downloads in it's own folder
+    train = datasets.MNIST('./data', train=True, download=True,
+                       transform=transform)
+    test = datasets.MNIST('./data', train=False,
+                       transform=transform)
+
+
+    # transform = transforms.Compose([
+    #     transforms.Resize((config['img_size'], config['img_size'])),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize((0.1307,), (0.3081,)),
+    # ])
+    #
+    # train_data = CustomDataSet("./", config['train_dir'], transform=transform)
+    # test_data = CustomDataSet("./", config['test_dir'], transform=transform)
+
+    return train, test 
+
+
+def init_dataloaders(train_data, test_data, config, world_size: int, rank: int):
     """
     Initializes data from datasets, creates dataloaders and return them 
     for use
     """
-
-    transform = transforms.Compose([
-        transforms.Resize((config['img_size'], config['img_size'])),
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,)),
-    ])
-
-    # train_data = datasets.ImageFolder(train_dir, transform=transform)
-    # test_data = datasets.ImageFolder(test_dir, transform=transform)
-    
-    train_data = CustomDataSet("./", config['train_dir'], transform=transform)
-    test_data = CustomDataSet("./", config['test_dir'], transform=transform)
-
     # Set up distributed sampler so 
     # each rank knows what data to use
     train_sampler = DistributedSampler(
