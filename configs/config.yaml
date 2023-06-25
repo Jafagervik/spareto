@@ -20,6 +20,7 @@ test_step: 20
 batch_size: 32
 img_size: 224
 num_channels: 3 #number of color channels
+early_stop_tresh: 5
 
 step_size: 1
 

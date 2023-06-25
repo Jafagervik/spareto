@@ -57,14 +57,48 @@ def train_step(
 
     return train_loss, train_acc
 
+# @torch.no_grad
+# def val_step(
+#     model: nn.Module, 
+#     dataloader: DataLoader,
+#     criterion: nn.Module,
+#     device: torch.device,
+#     epoch: int) -> Tuple[float, float]:
+#     model.eval()
+#
+#     val_loss = 0.0
+#     val_acc = 0.0
+#     early_stop = False
+#
+#     for _, (X, y) in enumerate(dataloader):
+#         X = X.to(device)
+#         y = y.to(device)
+#
+#         val_pred_logits = model(X)
+#
+#         loss = criterion(val_pred_logits, y)
+#         val_loss += loss.item()
+#
+#         val_pred_labels = val_pred_logits.argmax(dim=1)
+#         val_acc += ((val_pred_labels == y).sum().item() /
+#                         len(val_pred_labels))
+#
+#
+#     val_loss /= len(dataloader)
+#     val_acc /= len(dataloader)
+#
+#     return val_loss, val_acc, early_stop 
+#
 
 @torch.no_grad()
 def test_step(
     model: nn.Module,
     highest_acc: float,
+    best_epoch: int,
     dataloader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    epoch: int,
     config
 ) -> Tuple[float, float, float]:
     """ Performs one epoch worth of testing
@@ -75,7 +109,7 @@ def test_step(
     model.eval()
 
     test_loss, test_acc = 0, 0
-
+    
     # Go through the batches in current epoch
     for _, (X, y) in enumerate(dataloader):
         X = X.to(device)
@@ -93,12 +127,18 @@ def test_step(
 
         if test_acc > highest_acc:
             highest_acc = test_acc
+            best_epoch = epoch
             torch.save(model.state_dict(), config['checkpoint_best'])
+        # elif epoch - best_epoch > config['early_stop_tresh']:
+        #     print(f"Early stopping at epoch: {epoch}")
+        #     # TODO: Add validation set to prevent overfitting and move early stopping there
+        #     early_stop = True
+        #     break
 
     test_loss /= len(dataloader)
     test_acc /= len(dataloader)
 
-    return test_loss, test_acc, highest_acc 
+    return test_loss, test_acc, highest_acc, best_epoch
 
 
 def train(
@@ -131,6 +171,7 @@ def train(
 
 
     highest_acc = 0.0
+    best_epoch = -1
 
     start = time.time() 
 
@@ -138,8 +179,10 @@ def train(
         train_loss, train_acc = train_step(
             model, train_dataloader, criterion, optimizer, device, epoch, writer if writer else None)
 
-        test_loss, test_acc, highest_acc = test_step(
-            model, highest_acc, test_dataloader, criterion,  device, config)
+        # val_step()
+
+        test_loss, test_acc, highest_acc, best_epoch = test_step(
+            model, highest_acc, best_epoch, test_dataloader, criterion, device, epoch, config)
 
         scheduler.step()
 
@@ -160,6 +203,9 @@ def train(
         results["%d" % rank]["test_acc"].append(train_loss)
         results["%d" % rank]["test_loss"].append(train_loss)
 
+        # if early_stop: 
+        #     break
+
 
     if writer:
         writer.flush()
@@ -168,6 +214,7 @@ def train(
 
     if rank == 0:
         print(f"Training complete in {end - start} seconds")
+        print(f"Best epoch was: {epoch}")
 
         # Save model to file if selected
         if args.save_model:
@@ -175,6 +222,4 @@ def train(
 
         graphs.plot_acc_loss(results)
     
-
-
 

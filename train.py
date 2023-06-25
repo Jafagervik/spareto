@@ -42,6 +42,9 @@ def run_process(rank, args, config, train_dataset, test_dataset):
     dist.init_process_group("nccl", world_size=WORLD_SZ, rank=rank)
     # init_method="tcp://127.0.0.1:54621"
 
+    # We here set the correct gpu to run on based on which rank we're in
+    device = torch.device(f"cuda:{rank}")
+
     # Seed all rngs
     # utils.seed_all(args.seed)
 
@@ -66,7 +69,7 @@ def run_process(rank, args, config, train_dataset, test_dataset):
     test_kwargs = {'batch_size': 1000}
                    
     cuda_kwargs = {'num_workers': config['use_cpu'],
-                    'pin_memory': True}
+                    'pin_memory': config['pin_memory']}
 
     train_kwargs.update(cuda_kwargs)
     test_kwargs.update(cuda_kwargs)
@@ -96,8 +99,6 @@ def run_process(rank, args, config, train_dataset, test_dataset):
     # writer = SummaryWriter() if args.debug else None
     writer = None
 
-    # We here set the correct gpu to run on based on which rank we're in
-    device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
 
     print(f"Rank: {rank} | Device: {device=}")
 
@@ -177,6 +178,7 @@ def serial(args, config, train_dataset, test_dataset):
         args=args,
         writer=writer)
 
+
 def main():
     """
     Setup world and rank to distribute dataset over multiple gpus
@@ -204,7 +206,7 @@ def main():
         serial(args, config, train_ds, test_ds)
 
         print("Finished serial training!")
-        exit(0)
+        return
 
 
     if args.debug:

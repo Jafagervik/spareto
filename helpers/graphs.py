@@ -18,9 +18,6 @@ def plot_acc_loss(results):
 
     plt.legend()
 
-    print(x)
-    print(results["0"]["train_acc"])
-
     plt.xlim([1, len(x)])
     plt.ylim([0.0, 100.0])
 
