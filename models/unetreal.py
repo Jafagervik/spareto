@@ -58,7 +58,6 @@ class Decoder(nn.Module):
         )
         self.l3 = nn.Sequential( 
             torch.cat((x1, ConvBlock(layers[2], layers[3])), dim=1),
-            ConvBlock(layers[2], layers[3]),
             ConvBlock(layers[3], layers[4]),
         )
         self.l4 = nn.Sequential( 
