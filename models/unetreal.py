@@ -4,99 +4,107 @@ from torch import nn
 import torch.nn.functional as F
 
 
-class ConvBlock(nn.Module):
+class DoubleConvBlock(nn.Module):
     def __init__(self, inp: int, out: int) -> None:
         super().__init__()
-        self.c = nn.Conv2d(inp, out, 3, 1, 1)
-        self.bn = nn.BatchNorm2d(out)
+        self.layer = nn.Sequential(
+            nn.Conv2d(inp, out, kernel_size=3, bias=False),
+            nn.BatchNorm2d(out),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out, out, kernel_size=3, bias=False),
+            nn.BatchNorm2d(out),
+            nn.ReLU(inplace=True)
+        )
 
     def forward(self, x):
-        return F.relu(self.bn(self.c(x)))
+        return self.layer(x)
+
+
+class Downsample(nn.Module):
+    def __init__(self, inp: int, out: int):
+        super().__init__()
+        self.layer = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConvBlock(inp, out),
+        )
+
+    def forward(self, x):
+        return self.layer(x)
+
+
+class Upsample(nn.Module):
+    def __init__(self, inp: int, out: int):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(inp, inp // 2, kernel_size=2, stride=2)
+        self.conv = DoubleConvBlock(inp, out)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
 
 
 class Encoder(nn.Module):
-    def __init__(self, layers: List[int]) -> None:
+    def __init__(self, layers: List[int]):
         super().__init__()
-        self.l1 = nn.Sequential( 
-            ConvBlock(layers[0], layers[1]),
-            ConvBlock(layers[1], layers[2]),
+        self.layer = nn.Sequential(
+            DoubleConvBlock(layers[0], layers[1]),
+            Downsample(layers[1], layers[2]),
+            Downsample(layers[2], layers[3]),
+            Downsample(layers[3], layers[4]),
+            Downsample(layers[4], layers[5]),
         )
-        self.l2 = nn.Sequential( 
-            ConvBlock(layers[1], layers[2]),
-            ConvBlock(layers[2], layers[3]),
-        )
-        self.l3 = nn.Sequential( 
-            ConvBlock(layers[2], layers[3]),
-            ConvBlock(layers[3], layers[4]),
-        )
-        self.l4 = nn.Sequential( 
-            ConvBlock(layers[3], layers[4]),
-            ConvBlock(layers[4], layers[5]),
-        )
-        self.pool = nn.MaxPool2d(2,2)
-
 
     def forward(self, x):
-        x1 = self.pool(self.l1(x))
-        x2 = self.pool(self.l2(x1))
-        x3 = self.pool(self.l3(x2))
-        x4 = self.pool(self.l4(x3))
-
-        return x4, x3, x2, x1
+        return self.layer(x)
 
 
 class Decoder(nn.Module):
-    def __init__(self, layers: List[int], x4, x3, x2, x1) -> None:
+    def __init__(self, layers: List[int]):
         super().__init__()
-        self.l1 = nn.Sequential( 
-            torch.cat((x3, ConvBlock(layers[0], layers[1])), dim=1),
-            ConvBlock(layers[1], layers[2]),
+        self.layer = nn.Sequential(
+            Upsample(layers[0], layers[1]),
+            Upsample(layers[1], layers[2]),
+            Upsample(layers[2], layers[3]),
+            Upsample(layers[3], layers[4]),
+            nn.Conv2d(layers[4], layers[5], kernel_size=1)
         )
-        self.l2 = nn.Sequential( 
-            torch.cat((x2, ConvBlock(layers[1], layers[2])), dim=1),
-            ConvBlock(layers[2], layers[3]),
-        )
-        self.l3 = nn.Sequential( 
-            torch.cat((x1, ConvBlock(layers[2], layers[3])), dim=1),
-            ConvBlock(layers[3], layers[4]),
-        )
-        self.l4 = nn.Sequential( 
-            ConvBlock(layers[3], layers[4]),
-            ConvBlock(layers[4], layers[5]),
-        )
-
-        self.upconv = nn.MaxUnpool2d(2,2)
-
 
     def forward(self, x):
-        x = self.upconv(self.l1(x))
-        x = self.upconv(self.l2(x)) # add concat
-        x = self.upconv(self.l3(x)) # add concat
-        x = self.upconv(self.l4(x)) # add concat
+        return self.layer(x)
 
-        return x
 
 
 class Unet(nn.Module):
-    def __init__(self, layers: List[int]) -> None:
-        # [3,32,64,128,256,512]
+    def __init__(self, layers: List[int],) -> None:
         super().__init__()
-        self.encoder = Encoder(layers)
-        self.decoder = Decoder(list(reversed(layers)))
+        self.enc = Encoder(layers)
 
-        self.conv = nn.Conv2d(64, 3, 3, 1, 1)
+        # [3, 64, 128, 256, 512, 1024, num_classes=10]
+        # [10, 1024, 512, 256, 128, 64, 3] 
+        # [3, 1024, 512, 256, 128, 64, 10] 
+        rev = list(reversed(layers))
+        rev[0], rev[-1] = rev[-1], rev[0]
+        rev.pop(0)
+
+        self.dec= Decoder(rev)
 
 
     def forward(self, x):
-        x4, x3, x2, x1 = self.encoder(x)
-        x = self.decoder(x4,x3,x2,x1)
-
-        x = self.conv(x)
-
+        x = self.enc(x)
+        x = self.dec(x)
         return x
 
 
 if __name__ == "__main__":
-    layers = [3,32,64,128,256,512]
+    num_classes = 10
+    layers = [3,64,128,256,512,1024,num_classes]
     model = Unet(layers)
     assert(1 == 1)
