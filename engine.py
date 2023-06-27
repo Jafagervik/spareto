@@ -90,7 +90,7 @@ def train_step(
 #     return val_loss, val_acc, early_stop 
 #
 
-@torch.no_grad()
+@torch.inference_mode()
 def test_step(
     model: nn.Module,
     highest_acc: float,
@@ -100,7 +100,7 @@ def test_step(
     device: torch.device,
     epoch: int,
     config
-) -> Tuple[float, float, float]:
+) -> Tuple[float, float, float, int]:
     """ Performs one epoch worth of testing
 
     Returns:
@@ -214,7 +214,7 @@ def train(
 
     if rank == 0:
         print(f"Training complete in {end - start} seconds")
-        print(f"Best epoch was: {epoch}")
+        print(f"Best epoch was: {best_epoch}")
 
         # Save model to file if selected
         if args.save_model:

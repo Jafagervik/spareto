@@ -16,6 +16,8 @@ def parse_args():
                         help='quickly check a single pass')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
+    parser.add_argument('--num_gpus', type=int, default=2, metavar='S',
+                        help='Number of gpus to run on (default: 2)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--save-model', action='store_true', default=False,
